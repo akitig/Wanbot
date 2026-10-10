@@ -9,6 +9,7 @@ from collections.abc import Iterable
 
 import discord
 
+from wanbot.bot_permissions import validate_bot_permissions
 from wanbot.config import AppConfig, ConfigError, load_config
 from wanbot.logging_config import configure_logging, log_event
 from wanbot.validation import validate_guild_resources
@@ -79,6 +80,8 @@ class ConnectionCheckClient(discord.Client):
                 continue
 
             errors = validate_guild_resources(guild_config, guild)
+            if not errors:
+                errors = validate_bot_permissions(guild_config, guild)
             if errors:
                 validation_failed = True
                 for field in errors:
