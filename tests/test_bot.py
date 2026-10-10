@@ -13,7 +13,7 @@ from wanbot.features.registry import FeatureRegistry
 def prevent_command_sync_network(monkeypatch):
     monkeypatch.setattr(
         WanbotClient,
-        "_sync_test_commands",
+        "_sync_guild_commands",
         AsyncMock(),
     )
 

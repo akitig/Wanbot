@@ -56,15 +56,17 @@ def test_status_command_is_registered_only_in_test():
     asyncio.run(scenario())
 
 
-def test_sync_targets_only_test_guild():
+def test_sync_targets_registered_guilds_only():
     async def scenario():
         async with WanbotClient(make_config(), FeatureRegistry()) as client:
             client.tree.sync = AsyncMock(return_value=[])
 
-            await client._sync_test_commands()
+            await client._sync_guild_commands()
 
-            client.tree.sync.assert_awaited_once()
-            target = client.tree.sync.await_args.kwargs["guild"]
-            assert target.id == 200
+            targets = [
+                call.kwargs["guild"].id
+                for call in client.tree.sync.await_args_list
+            ]
+            assert targets == [100, 200]
 
     asyncio.run(scenario())

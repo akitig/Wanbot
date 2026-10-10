@@ -8,15 +8,24 @@ import logging
 import discord
 
 from wanbot.commands import WanbotCommandTree, register_status_command
-from wanbot.config import AppConfig, ConfigError
+from wanbot.config import AppConfig, ConfigError, GuildConfig
 from wanbot.connection import ConnectionCheckClient
 from wanbot.features.registry import FeatureManager, FeatureRegistry
 from wanbot.logging_config import log_event
+from wanbot.valorant.feature import ValorantDiagnosisFeature
 
 
-def build_registry() -> FeatureRegistry:
-    """後続Issueで、実装した機能の生成処理をここへ登録する。"""
-    return FeatureRegistry()
+def build_registry(
+    client: WanbotClient,
+    config: AppConfig,
+) -> FeatureRegistry:
+    registry = FeatureRegistry()
+
+    def create_diagnosis(guild: GuildConfig) -> ValorantDiagnosisFeature:
+        return ValorantDiagnosisFeature(client, config, guild)
+
+    registry.register("valorant_diagnosis", create_diagnosis)
+    return registry
 
 
 def validate_implementations(
@@ -40,27 +49,31 @@ class WanbotClient(ConnectionCheckClient):
     def __init__(
         self,
         config: AppConfig,
-        registry: FeatureRegistry,
+        registry: FeatureRegistry | None = None,
     ) -> None:
-        validate_implementations(config, registry)
+        # テストでは差し替えた機能一覧を使える。
+        # 通常起動では実装済み機能を登録する。
+        selected_registry = (
+            registry if registry is not None else build_registry(self, config)
+        )
+        validate_implementations(config, selected_registry)
         super().__init__(config)
 
-        self.feature_manager = FeatureManager(config, registry)
+        self.feature_manager = FeatureManager(config, selected_registry)
         self._feature_start_lock = asyncio.Lock()
         self._features_started = False
 
         self.tree = WanbotCommandTree(self, fallback_to_global=False)
         register_status_command(self.tree, self, config)
 
-    async def _sync_test_commands(self) -> None:
+    async def _sync_guild_commands(self) -> None:
         for guild in self.config.guilds.values():
-            if guild.environment != "test":
-                continue
-
+            # 空の一覧も同期し、無効化した機能の古いコマンドを削除する。
+            # グローバルコマンドや未登録サーバーは同期しない。
             await self.tree.sync(guild=discord.Object(id=guild.guild_id))
             log_event(
                 "commands",
-                "test_commands_synced",
+                "guild_commands_synced",
                 guild_id=guild.guild_id,
             )
 
@@ -77,7 +90,7 @@ class WanbotClient(ConnectionCheckClient):
             await self.feature_manager.start()
 
             try:
-                await self._sync_test_commands()
+                await self._sync_guild_commands()
             except Exception as error:
                 self.connection_check_failed = True
                 log_event(
@@ -116,9 +129,6 @@ class WanbotClient(ConnectionCheckClient):
 
 
 async def run_bot(config: AppConfig) -> int:
-    registry = build_registry()
-    validate_implementations(config, registry)
-
-    async with WanbotClient(config, registry) as client:
+    async with WanbotClient(config) as client:
         await client.start(config.discord_token)
         return 1 if client.connection_check_failed else 0
