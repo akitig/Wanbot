@@ -73,6 +73,7 @@ class GuildConfig:
     ids: Mapping[str, int]
     rules_emoji: str
     reaction_role_message_ids: frozenset[int]
+    valorant_timeout_seconds: int = 1800
 
     def feature_enabled(self, feature: str) -> bool:
         return feature in self.enabled_features
@@ -190,6 +191,21 @@ def _guild(values: Mapping[str, str], prefix: str) -> GuildConfig | None:
             f"{prefix}_GACHI_ROLE_ID / {prefix}_ENJOY_ROLE_ID: 別のロールが必要です"
         )
 
+    valorant_timeout_seconds = 1800
+    if "valorant_diagnosis" in features:
+        timeout_key = f"{prefix}_VALO_DIAGNOSIS_TIMEOUT_SECONDS"
+        raw_timeout = _text(values, timeout_key)
+        if raw_timeout:
+            if (
+                not raw_timeout.isascii()
+                or not raw_timeout.isdecimal()
+                or len(raw_timeout) > 10
+            ):
+                raise ConfigError(f"{timeout_key}: 正の整数の秒数を指定してください")
+            valorant_timeout_seconds = int(raw_timeout)
+            if not 1 <= valorant_timeout_seconds <= 2_147_483_647:
+                raise ConfigError(f"{timeout_key}: 秒数が有効範囲外です")
+
     return GuildConfig(
         environment=prefix.lower(),
         guild_id=guild_id,
@@ -198,6 +214,7 @@ def _guild(values: Mapping[str, str], prefix: str) -> GuildConfig | None:
         ids=MappingProxyType(ids),
         rules_emoji=rules_emoji,
         reaction_role_message_ids=reaction_messages,
+        valorant_timeout_seconds=valorant_timeout_seconds,
     )
 
 
