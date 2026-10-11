@@ -29,6 +29,7 @@ def test_production_and_test_have_separate_features():
     values.update({
         "PROD_GUILD_ID": "100",
         "TEST_ENABLED_FEATURES": "bump",
+        "TEST_DISBOARD_BOT_ID": "300",
         "TEST_BUMP_CHANNEL_ID": "201",
     })
     config = parse_config(values)

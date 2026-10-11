@@ -33,11 +33,12 @@ def test_empty_registry_accepts_disabled_features():
 
 def test_unimplemented_enabled_feature_is_rejected():
     config = make_config(
-        TEST_ENABLED_FEATURES="bump",
-        TEST_BUMP_CHANNEL_ID="210",
+        TEST_ENABLED_FEATURES="leave_log",
+        TEST_LEAVE_LOG_CHANNEL_ID="210",
+        TEST_DISBOARD_BOT_ID="300",
     )
 
-    with pytest.raises(ConfigError, match="bump"):
+    with pytest.raises(ConfigError, match="leave_log"):
         validate_implementations(config, FeatureRegistry())
 
 

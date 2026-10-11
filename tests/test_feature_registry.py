@@ -12,11 +12,13 @@ def make_config(*, production_enabled=False):
         "PROD_GUILD_ID": "100",
         "TEST_GUILD_ID": "200",
         "TEST_ENABLED_FEATURES": "bump",
+        "TEST_DISBOARD_BOT_ID": "300",
         "TEST_BUMP_CHANNEL_ID": "210",
     }
     if production_enabled:
         values.update({
             "PROD_ENABLED_FEATURES": "bump",
+            "PROD_DISBOARD_BOT_ID": "300",
             "PROD_BUMP_CHANNEL_ID": "110",
         })
     return parse_config(values)

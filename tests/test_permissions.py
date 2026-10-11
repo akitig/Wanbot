@@ -21,6 +21,7 @@ def config():
         "TEST_GUILD_ID": "200",
         "TEST_ADMIN_ROLE_IDS": "201,202",
         "TEST_ENABLED_FEATURES": "bump",
+        "TEST_DISBOARD_BOT_ID": "300",
         "TEST_BUMP_CHANNEL_ID": "210",
     })
 

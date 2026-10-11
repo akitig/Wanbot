@@ -37,10 +37,17 @@ def missing_guild_ids(
 
 class ConnectionCheckClient(discord.Client):
     def __init__(self, config: AppConfig) -> None:
-        # 今はサーバー情報だけを受け取る。
-        # メンバー一覧・メッセージ本文などの購読は有効にしない。
         intents = discord.Intents.none()
         intents.guilds = True
+
+        # BUMP成功の本文・埋め込みと、投稿の更新を受け取る。
+        # DMメッセージやメンバー一覧の購読はここでは有効にしない。
+        if any(
+            guild.feature_enabled("bump")
+            for guild in config.guilds.values()
+        ):
+            intents.guild_messages = True
+            intents.message_content = True
         super().__init__(intents=intents)
 
         self.config = config

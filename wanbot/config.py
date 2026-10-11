@@ -74,6 +74,9 @@ class GuildConfig:
     rules_emoji: str
     reaction_role_message_ids: frozenset[int]
     valorant_timeout_seconds: int = 1800
+    disboard_bot_id: int | None = None
+    disboard_bump_command_id: int | None = None
+    bump_cooldown_seconds: int = 7200
 
     def feature_enabled(self, feature: str) -> bool:
         return feature in self.enabled_features
@@ -206,6 +209,36 @@ def _guild(values: Mapping[str, str], prefix: str) -> GuildConfig | None:
             if not 1 <= valorant_timeout_seconds <= 2_147_483_647:
                 raise ConfigError(f"{timeout_key}: 秒数が有効範囲外です")
 
+    disboard_bot_id = None
+    disboard_bump_command_id = None
+    bump_cooldown_seconds = 7200
+
+    if "bump" in features:
+        bot_key = f"{prefix}_DISBOARD_BOT_ID"
+        disboard_bot_id = _optional_id(values, bot_key)
+        if disboard_bot_id is None:
+            raise ConfigError(f"{bot_key}: bump に必要です")
+
+        disboard_bump_command_id = _optional_id(
+            values,
+            f"{prefix}_DISBOARD_BUMP_COMMAND_ID",
+        )
+
+        cooldown_key = f"{prefix}_BUMP_COOLDOWN_SECONDS"
+        raw_cooldown = _text(values, cooldown_key)
+        if raw_cooldown:
+            if (
+                not raw_cooldown.isascii()
+                or not raw_cooldown.isdecimal()
+                or len(raw_cooldown) > 10
+            ):
+                raise ConfigError(
+                    f"{cooldown_key}: 正の整数の秒数を指定してください"
+                )
+            bump_cooldown_seconds = int(raw_cooldown)
+            if not 1 <= bump_cooldown_seconds <= 2_147_483_647:
+                raise ConfigError(f"{cooldown_key}: 秒数が有効範囲外です")
+
     return GuildConfig(
         environment=prefix.lower(),
         guild_id=guild_id,
@@ -215,6 +248,9 @@ def _guild(values: Mapping[str, str], prefix: str) -> GuildConfig | None:
         rules_emoji=rules_emoji,
         reaction_role_message_ids=reaction_messages,
         valorant_timeout_seconds=valorant_timeout_seconds,
+        disboard_bot_id=disboard_bot_id,
+        disboard_bump_command_id=disboard_bump_command_id,
+        bump_cooldown_seconds=bump_cooldown_seconds,
     )
 
 
