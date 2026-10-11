@@ -53,6 +53,15 @@ class FeatureManager:
             return False
         return (guild_id, feature) in self._active
 
+    def get_active(
+        self,
+        guild_id: int | None,
+        feature: str,
+    ) -> Feature | None:
+        if guild_id is None:
+            return None
+        return self._active.get((guild_id, feature))
+
     async def start(self) -> None:
         # 再接続などで再度呼ばれても、二重起動しない。
         if self._started or self._closed:

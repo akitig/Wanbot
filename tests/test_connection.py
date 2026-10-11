@@ -25,6 +25,7 @@ def test_connection_config_rejects_enabled_feature():
     config = make_config(
         TEST_ENABLED_FEATURES="bump",
         TEST_BUMP_CHANNEL_ID="210",
+        TEST_DISBOARD_BOT_ID="300",
     )
 
     with pytest.raises(ConfigError, match="ENABLED_FEATURES"):

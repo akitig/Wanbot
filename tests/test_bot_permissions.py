@@ -14,6 +14,7 @@ def make_config(*, enabled=True):
     if enabled:
         values.update({
             "TEST_ENABLED_FEATURES": "bump",
+            "TEST_DISBOARD_BOT_ID": "300",
             "TEST_BUMP_CHANNEL_ID": "210",
         })
     return parse_config(values).guild_for(200)

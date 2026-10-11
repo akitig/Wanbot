@@ -7,6 +7,8 @@ import logging
 
 import discord
 
+from wanbot.bump.events import BumpEvents
+from wanbot.bump.feature import BumpFeature
 from wanbot.commands import WanbotCommandTree, register_status_command
 from wanbot.config import AppConfig, ConfigError, GuildConfig
 from wanbot.connection import ConnectionCheckClient
@@ -24,6 +26,10 @@ def build_registry(
     def create_diagnosis(guild: GuildConfig) -> ValorantDiagnosisFeature:
         return ValorantDiagnosisFeature(client, config, guild)
 
+    def create_bump(guild: GuildConfig) -> BumpFeature:
+        return BumpFeature(client, config, guild)
+
+    registry.register("bump", create_bump)
     registry.register("valorant_diagnosis", create_diagnosis)
     return registry
 
@@ -60,11 +66,21 @@ class WanbotClient(ConnectionCheckClient):
         super().__init__(config)
 
         self.feature_manager = FeatureManager(config, selected_registry)
+        self._bump_events = BumpEvents(self)
         self._feature_start_lock = asyncio.Lock()
         self._features_started = False
 
         self.tree = WanbotCommandTree(self, fallback_to_global=False)
         register_status_command(self.tree, self, config)
+
+    async def on_message(self, message: discord.Message) -> None:
+        await self._bump_events.on_message(message)
+
+    async def on_raw_message_edit(
+        self,
+        payload: discord.RawMessageUpdateEvent,
+    ) -> None:
+        await self._bump_events.on_raw_message_edit(payload)
 
     async def _sync_guild_commands(self) -> None:
         for guild in self.config.guilds.values():
