@@ -14,6 +14,7 @@ from wanbot.config import AppConfig, ConfigError, GuildConfig
 from wanbot.connection import ConnectionCheckClient
 from wanbot.features.registry import FeatureManager, FeatureRegistry
 from wanbot.logging_config import log_event
+from wanbot.recruitment.feature import RecruitmentFeature
 from wanbot.valorant.feature import ValorantDiagnosisFeature
 
 
@@ -29,6 +30,10 @@ def build_registry(
     def create_bump(guild: GuildConfig) -> BumpFeature:
         return BumpFeature(client, config, guild)
 
+    def create_recruitment(guild: GuildConfig) -> RecruitmentFeature:
+        return RecruitmentFeature(client, config, guild)
+
+    registry.register("recruitment", create_recruitment)
     registry.register("bump", create_bump)
     registry.register("valorant_diagnosis", create_diagnosis)
     return registry
@@ -75,6 +80,21 @@ class WanbotClient(ConnectionCheckClient):
 
     async def on_message(self, message: discord.Message) -> None:
         await self._bump_events.on_message(message)
+
+        guild_id = message.guild.id if message.guild is not None else None
+        guild = self.config.guild_for(guild_id)
+
+        if (
+            guild is None
+            or not guild.feature_enabled("recruitment")
+            or message.channel.id != guild.ids.get("VALO_RECRUIT_CHANNEL_ID")
+            or not self.feature_available(guild_id, "recruitment")
+        ):
+            return
+
+        feature = self.feature_manager.get_active(guild_id, "recruitment")
+        if isinstance(feature, RecruitmentFeature):
+            await feature.handle_message(message)
 
     async def on_raw_message_edit(
         self,

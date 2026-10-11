@@ -48,6 +48,13 @@ class ConnectionCheckClient(discord.Client):
         ):
             intents.guild_messages = True
             intents.message_content = True
+        # 募集パネルの移動には、本文を読まず投稿イベントだけを使う。
+        if any(
+            guild.feature_enabled("recruitment")
+            for guild in config.guilds.values()
+        ):
+            intents.guild_messages = True
+
         super().__init__(intents=intents)
 
         self.config = config
