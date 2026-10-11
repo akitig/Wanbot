@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 
 import discord
 
@@ -16,6 +17,7 @@ from wanbot.features.registry import FeatureManager, FeatureRegistry
 from wanbot.logging_config import log_event
 from wanbot.recruitment.feature import RecruitmentFeature
 from wanbot.valorant.feature import ValorantDiagnosisFeature
+from wanbot.welcome.feature import WelcomeFeature
 
 
 def build_registry(
@@ -33,6 +35,10 @@ def build_registry(
     def create_recruitment(guild: GuildConfig) -> RecruitmentFeature:
         return RecruitmentFeature(client, config, guild)
 
+    def create_welcome(guild: GuildConfig) -> WelcomeFeature:
+        return WelcomeFeature(client, config, guild)
+
+    registry.register("welcome", create_welcome)
     registry.register("recruitment", create_recruitment)
     registry.register("bump", create_bump)
     registry.register("valorant_diagnosis", create_diagnosis)
@@ -74,9 +80,102 @@ class WanbotClient(ConnectionCheckClient):
         self._bump_events = BumpEvents(self)
         self._feature_start_lock = asyncio.Lock()
         self._features_started = False
+        self._welcome_startup_complete = asyncio.Event()
 
         self.tree = WanbotCommandTree(self, fallback_to_global=False)
         register_status_command(self.tree, self, config)
+
+    async def on_raw_member_remove(
+        self,
+        payload: discord.RawMemberRemoveEvent,
+    ) -> None:
+        guild_id = payload.guild_id
+        guild = self.config.guild_for(guild_id)
+
+        if (
+            payload.user.bot
+            or guild is None
+            or not guild.feature_enabled("welcome")
+            or self.is_closed()
+        ):
+            return
+
+        await self._welcome_startup_complete.wait()
+
+        if not self.feature_available(guild_id, "welcome"):
+            return
+
+        feature = self.feature_manager.get_active(guild_id, "welcome")
+        if not isinstance(feature, WelcomeFeature):
+            return
+
+        # キャッシュにMemberがない場合も、退出処理に必要な情報を渡す。
+        member = SimpleNamespace(
+            id=payload.user.id,
+            bot=payload.user.bot,
+            guild=SimpleNamespace(id=guild_id),
+        )
+
+        try:
+            closed = await feature.member_left(member)
+        except Exception as error:
+            log_event(
+                "welcome",
+                "member_left_archive_failed",
+                guild_id=guild_id,
+                level=logging.ERROR,
+                error=error,
+            )
+            return
+
+        if closed is not None:
+            log_event(
+                "welcome",
+                "member_left_archived",
+                guild_id=guild_id,
+            )
+
+    async def on_member_join(self, member: discord.Member) -> None:
+        guild_id = member.guild.id
+        guild = self.config.guild_for(guild_id)
+
+        if (
+            member.bot
+            or guild is None
+            or not guild.feature_enabled("welcome")
+            or self.is_closed()
+        ):
+            return
+
+        # 起動準備中の参加通知も、準備完了後に処理する。
+        await self._welcome_startup_complete.wait()
+
+        if not self.feature_available(guild_id, "welcome"):
+            return
+
+        feature = self.feature_manager.get_active(guild_id, "welcome")
+        if not isinstance(feature, WelcomeFeature):
+            return
+
+        try:
+            await feature.create(member)
+        except Exception as error:
+            # 1人分の作成失敗で、Bot全体を停止させない。
+            # 名前や例外本文は一般ログへ出力しない。
+            log_event(
+                "welcome",
+                "automatic_creation_failed",
+                guild_id=guild_id,
+                level=logging.ERROR,
+                error=error,
+            )
+            return
+
+        log_event(
+            "welcome",
+            "automatic_creation_completed",
+            guild_id=guild_id,
+        )
 
     async def on_message(self, message: discord.Message) -> None:
         await self._bump_events.on_message(message)
@@ -139,6 +238,7 @@ class WanbotClient(ConnectionCheckClient):
                 return
 
             self._features_started = True
+            self._welcome_startup_complete.set()
             log_event("lifecycle", "runtime_ready")
 
     def feature_available(
@@ -158,6 +258,9 @@ class WanbotClient(ConnectionCheckClient):
         return self.feature_manager.is_active(guild_id, feature)
 
     async def close(self) -> None:
+        # 終了中に待機中の参加処理が動き出さないようにする。
+        self.connection_check_failed = True
+        self._welcome_startup_complete.set()
         try:
             await self.feature_manager.stop()
         finally:

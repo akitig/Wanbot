@@ -41,7 +41,7 @@ class ConnectionCheckClient(discord.Client):
         intents.guilds = True
 
         # BUMP成功の本文・埋め込みと、投稿の更新を受け取る。
-        # DMメッセージやメンバー一覧の購読はここでは有効にしない。
+        # DMメッセージの購読はここでは有効にしない。
         if any(
             guild.feature_enabled("bump")
             for guild in config.guilds.values()
@@ -54,6 +54,12 @@ class ConnectionCheckClient(discord.Client):
             for guild in config.guilds.values()
         ):
             intents.guild_messages = True
+
+        # Welcomeが有効なら、新しいメンバーの参加通知を受け取る。
+        intents.members = any(
+            guild.feature_enabled("welcome")
+            for guild in config.guilds.values()
+        )
 
         super().__init__(intents=intents)
 
