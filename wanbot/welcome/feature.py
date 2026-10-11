@@ -12,6 +12,11 @@ from wanbot.welcome.archive import WelcomeArchiveChannel
 from wanbot.welcome.channels import WelcomeChannelError, WelcomeChannels
 from wanbot.welcome.commands import register_welcome_command
 from wanbot.welcome.lifecycle import WelcomeLifecycle
+from wanbot.welcome.questionnaire_manager import WelcomeQuestionnaires
+from wanbot.welcome.questionnaire_panel_repository import (
+    QuestionnairePanelRepository,
+)
+from wanbot.welcome.questionnaire_repository import QuestionnaireRepository
 from wanbot.welcome.repository import WelcomeRepository, WelcomeSession
 
 if TYPE_CHECKING:
@@ -39,6 +44,7 @@ class WelcomeFeature:
         self._registered = False
         self._pending: set[asyncio.Task] = set()
         self._worker: asyncio.Task | None = None
+        self._reconcile_needed = True
 
         self._repository = WelcomeRepository(config, guild.guild_id)
         self._channels = WelcomeChannels(
@@ -55,6 +61,21 @@ class WelcomeFeature:
             repository=self._repository,
             channels=self._channels,
             archive=self._archive,
+        )
+        self._question_repository = QuestionnaireRepository(
+            config, guild.guild_id
+        )
+        self._question_panel_repository = QuestionnairePanelRepository(
+            config, guild.guild_id
+        )
+        self._questionnaires = WelcomeQuestionnaires(
+            client=client,
+            guild_id=guild.guild_id,
+            welcome_repository=self._repository,
+            questionnaire_repository=self._question_repository,
+            panel_repository=self._question_panel_repository,
+            lock=self._lifecycle.operation_lock,
+            is_available=self._available,
         )
 
     def _available(self) -> bool:
@@ -84,6 +105,17 @@ class WelcomeFeature:
             raise
 
         self._started = True
+        try:
+            await self._questionnaires.refresh()
+        except Exception as error:
+            log_event(
+                "welcome",
+                "questionnaire_restore_failed",
+                guild_id=self._guild_id,
+                level=logging.ERROR,
+                error=error,
+            )
+
         self._worker = asyncio.create_task(
             self._archive_worker(),
             name=f"welcome-archive-worker-{self._guild_id}",
@@ -103,9 +135,14 @@ class WelcomeFeature:
             raise WelcomeChannelError("Welcome is unavailable")
 
         return await self._run(
-            self._lifecycle.ensure(member),
+            self._create_with_questions(member),
             name="create",
         )
+
+    async def _create_with_questions(self, member):
+        session = await self._lifecycle.ensure(member)
+        await self._questionnaires.ensure(session)
+        return session
 
     async def member_left(self, member) -> WelcomeSession | None:
         if not self._available():
@@ -125,9 +162,30 @@ class WelcomeFeature:
             name="archive-retry",
         )
 
+    async def reconcile_members(self):
+        if not self._available():
+            return None
+
+        guild = self._client.get_guild(self._guild_id)
+        return await self._run(
+            self._lifecycle.reconcile_members(guild),
+            name="membership-reconciliation",
+        )
+
     async def _archive_worker(self):
         while not self._closed:
             await asyncio.sleep(ARCHIVE_RETRY_SECONDS)
+
+            if self._available():
+                try:
+                    await self._run(
+                        self._questionnaires.refresh(),
+                        name="questionnaire-refresh",
+                    )
+                except Exception:
+                    # 保存データ読み込みなどの失敗は次の周期で再試行。
+                    pass
+
             try:
                 result = await self.retry_archives()
             except Exception:
@@ -141,6 +199,21 @@ class WelcomeFeature:
                     "pending_archives_completed",
                     guild_id=self._guild_id,
                 )
+
+            if self._reconcile_needed:
+                try:
+                    result = await self.reconcile_members()
+                except Exception:
+                    # 起動後の確認も、失敗時は次の周期で再試行する。
+                    continue
+
+                if result is not None and result[1] == 0:
+                    self._reconcile_needed = False
+                    log_event(
+                        "welcome",
+                        "membership_reconciliation_completed",
+                        guild_id=self._guild_id,
+                    )
 
     def _completed(self, task: asyncio.Task) -> None:
         self._pending.discard(task)
@@ -186,4 +259,13 @@ class WelcomeFeature:
                         asyncio.gather(*pending, return_exceptions=True)
                     )
             finally:
-                await self._repository.close()
+                try:
+                    await self._questionnaires.close()
+                finally:
+                    try:
+                        await self._question_repository.close()
+                    finally:
+                        try:
+                            await self._question_panel_repository.close()
+                        finally:
+                            await self._repository.close()

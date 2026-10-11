@@ -317,6 +317,18 @@ class WelcomeRepository:
 
         return await self._update(session_id, change)
 
+    async def open_sessions(self) -> tuple[WelcomeSession, ...]:
+        """在籍確認が必要な、準備中・案内中のセッションを返す。"""
+        sessions = _decode(await self._store.read())
+        return tuple(sorted(
+            (
+                session
+                for session in sessions.values()
+                if session.state in ("preparing", "active")
+            ),
+            key=lambda session: (session.created_at, session.session_id),
+        ))
+
     async def pending_archives(self) -> tuple[WelcomeSession, ...]:
         """再起動後にも、未完了のログ移動を取得できる。"""
         sessions = _decode(await self._store.read())

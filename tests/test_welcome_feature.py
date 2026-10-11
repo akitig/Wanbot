@@ -45,11 +45,29 @@ def setup_feature():
             return_value=channels,
         ) as channels_factory,
         patch(
+            "wanbot.welcome.feature.QuestionnaireRepository",
+            return_value=SimpleNamespace(close=AsyncMock()),
+        ),
+        patch(
+            "wanbot.welcome.feature.QuestionnairePanelRepository",
+            return_value=SimpleNamespace(close=AsyncMock()),
+        ),
+        patch(
+            "wanbot.welcome.feature.WelcomeQuestionnaires",
+            return_value=SimpleNamespace(
+                ensure=AsyncMock(),
+                refresh=AsyncMock(),
+                close=AsyncMock(),
+            ),
+        ),
+        patch(
             "wanbot.welcome.feature.WelcomeLifecycle",
             return_value=SimpleNamespace(
+                operation_lock=asyncio.Lock(),
                 ensure=channels.ensure,
                 member_left=AsyncMock(),
                 resume_pending=AsyncMock(return_value=(0, 0)),
+                reconcile_members=AsyncMock(return_value=(0, 0)),
             ),
         ),
         patch(

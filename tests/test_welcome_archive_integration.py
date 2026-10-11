@@ -116,9 +116,11 @@ def feature_case(monkeypatch):
     channels = SimpleNamespace(ensure=AsyncMock())
     archive = SimpleNamespace(archive=AsyncMock())
     lifecycle = SimpleNamespace(
+        operation_lock=asyncio.Lock(),
         ensure=AsyncMock(),
         member_left=AsyncMock(),
         resume_pending=AsyncMock(return_value=(0, 0)),
+        reconcile_members=AsyncMock(return_value=(0, 0)),
     )
     client = Mock()
     client.feature_available.return_value = True
@@ -145,6 +147,23 @@ def feature_case(monkeypatch):
     )
     monkeypatch.setattr(
         feature_module, "register_welcome_command", Mock(),
+    )
+
+    monkeypatch.setattr(
+        feature_module, "QuestionnaireRepository",
+        Mock(return_value=SimpleNamespace(close=AsyncMock())),
+    )
+    monkeypatch.setattr(
+        feature_module, "QuestionnairePanelRepository",
+        Mock(return_value=SimpleNamespace(close=AsyncMock())),
+    )
+    monkeypatch.setattr(
+        feature_module, "WelcomeQuestionnaires",
+        Mock(return_value=SimpleNamespace(
+            ensure=AsyncMock(),
+            refresh=AsyncMock(),
+            close=AsyncMock(),
+        )),
     )
 
     feature = WelcomeFeature(client, Mock(), guild)
@@ -228,5 +247,30 @@ def test_stop_waits_for_running_archive(monkeypatch):
                 await stopping
             else:
                 await feature.stop()
+
+    asyncio.run(run())
+
+
+def test_worker_retries_membership_check_until_success(monkeypatch):
+    async def run():
+        feature, lifecycle, _ = feature_case(monkeypatch)
+        monkeypatch.setattr(feature_module, "ARCHIVE_RETRY_SECONDS", 0.01)
+        lifecycle.reconcile_members.side_effect = [(0, 1), (1, 0)]
+
+        async def wait_until_completed():
+            while feature._reconcile_needed:
+                await asyncio.sleep(0.001)
+
+        try:
+            await feature.start()
+            await asyncio.wait_for(wait_until_completed(), timeout=2)
+
+            assert lifecycle.reconcile_members.await_count == 2
+
+            # 成功後は、同じ起動中に全員の在籍確認を繰り返さない。
+            await asyncio.sleep(0.04)
+            assert lifecycle.reconcile_members.await_count == 2
+        finally:
+            await feature.stop()
 
     asyncio.run(run())
