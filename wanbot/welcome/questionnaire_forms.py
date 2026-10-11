@@ -142,11 +142,15 @@ class TextQuestionModal(discord.ui.Modal):
         question,
         revision,
         on_answer,
+        default_value=None,
     ):
         if question not in TEXT_LIMITS:
             raise ValueError("Not a text question")
 
-        super().__init__(title=LABELS[question], timeout=300)
+        title = LABELS[question]
+        if default_value is not None:
+            title = f"{title}を修正"
+        super().__init__(title=title, timeout=300)
         self.context = context
         self.question = question
         self.revision = revision
@@ -157,6 +161,7 @@ class TextQuestionModal(discord.ui.Modal):
             required=True,
             min_length=1,
             max_length=TEXT_LIMITS[question],
+            default=default_value,
             style=(
                 discord.TextStyle.paragraph
                 if question in ("comment", "hobby")
@@ -183,7 +188,9 @@ class TextQuestionModal(discord.ui.Modal):
 
 
 class QuestionView(SafeQuestionView):
-    def __init__(self, context, snapshot, *, on_answer):
+    def __init__(
+        self, context, snapshot, *, on_answer, on_edit=None
+    ):
         if (
             snapshot.session_id != context.session_id
             or snapshot.user_id != context.user_id
@@ -217,6 +224,27 @@ class QuestionView(SafeQuestionView):
             self.selection.callback = self.select_answer
             self.add_item(self.selection)
 
+        self._on_edit = on_edit
+        if on_edit is not None and any(
+            getattr(snapshot.progress, field) is not None
+            for field in TEXT_LIMITS
+        ):
+            edit_button = discord.ui.Button(
+                label="入力済みの回答を修正",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
+            edit_button.callback = self.edit_answers
+            self.add_item(edit_button)
+
+    async def edit_answers(self, interaction):
+        if not await self.context.check(interaction):
+            return
+        if self._on_edit is None:
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self._on_edit(interaction)
+
     async def open_modal(self, interaction):
         if not await self.context.check(interaction):
             return
@@ -248,3 +276,72 @@ class QuestionView(SafeQuestionView):
             self.revision,
         )
         self.stop()
+
+
+class EditAnswersView(SafeQuestionView):
+    def __init__(self, context, snapshot, *, on_edit, on_back):
+        if (
+            snapshot.session_id != context.session_id
+            or snapshot.user_id != context.user_id
+        ):
+            raise ValueError("Questionnaire identity does not match")
+
+        fields = [
+            field
+            for field in TEXT_LIMITS
+            if getattr(snapshot.progress, field) is not None
+        ]
+        if not fields:
+            raise ValueError("No text answers to edit")
+
+        super().__init__(context, timeout=300)
+        self._questionnaire_snapshot = snapshot
+        self._fields = frozenset(fields)
+        self._on_edit = on_edit
+        self._on_back = on_back
+
+        self.selection = discord.ui.Select(
+            placeholder="修正する項目を選んでください",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(label=LABELS[field], value=field)
+                for field in fields
+            ],
+        )
+        self.selection.callback = self.open_edit_modal
+        self.add_item(self.selection)
+
+        back = discord.ui.Button(
+            label="質問・回答一覧に戻る",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        back.callback = self.go_back
+        self.add_item(back)
+
+    async def open_edit_modal(self, interaction):
+        if not await self.context.check(interaction):
+            return
+
+        values = self.selection.values
+        if len(values) != 1 or values[0] not in self._fields:
+            await notice(interaction, "修正する項目を選び直してください。")
+            return
+
+        question = values[0]
+        await interaction.response.send_modal(
+            TextQuestionModal(
+                self.context,
+                question=question,
+                revision=self._questionnaire_snapshot.revision,
+                on_answer=self._on_edit,
+                default_value=getattr(self._questionnaire_snapshot.progress, question),
+            )
+        )
+
+    async def go_back(self, interaction):
+        if not await self.context.check(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self._on_back(interaction)

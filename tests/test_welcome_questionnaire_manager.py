@@ -150,3 +150,96 @@ def test_start_button_is_connected_to_saved_questions(tmp_path, monkeypatch):
             await close_case(item)
 
     asyncio.run(run())
+
+
+def missing_channel_error(code=10003):
+    import discord
+
+    return discord.NotFound(
+        SimpleNamespace(status=404, reason="test"),
+        {"code": code, "message": "test"},
+    )
+
+
+def test_confirmed_missing_channel_closes_session(tmp_path, monkeypatch):
+    async def run():
+        item = await make_case(tmp_path, monkeypatch)
+        try:
+            item.panel.ensure.side_effect = missing_channel_error()
+            item.manager._client.fetch_channel = AsyncMock(
+                side_effect=missing_channel_error()
+            )
+            original_answers = await item.questions.ensure(item.session)
+
+            await item.manager.refresh()
+
+            assert await item.welcome.get_active(300) is None
+            history = await item.welcome.history(300)
+            assert len(history) == 1
+            assert history[0].state == "closed"
+            assert history[0].closed_reason == "channel_deleted"
+            assert history[0].channel_id == 500
+            assert (
+                await item.questions.get(item.session.session_id)
+                == original_answers
+            )
+
+            await item.manager.refresh()
+            item.panel.ensure.assert_awaited_once()
+        finally:
+            await close_case(item)
+
+    asyncio.run(run())
+
+
+def test_missing_message_does_not_close_session(tmp_path, monkeypatch):
+    async def run():
+        item = await make_case(tmp_path, monkeypatch)
+        try:
+            item.panel.ensure.side_effect = missing_channel_error(10008)
+            item.manager._client.fetch_channel = AsyncMock()
+
+            await item.manager.refresh()
+
+            assert await item.welcome.get_active(300) == item.session
+            item.manager._client.fetch_channel.assert_not_awaited()
+        finally:
+            await close_case(item)
+
+    asyncio.run(run())
+
+
+def test_channel_found_on_recheck_keeps_session(tmp_path, monkeypatch):
+    async def run():
+        item = await make_case(tmp_path, monkeypatch)
+        try:
+            item.panel.ensure.side_effect = missing_channel_error()
+            item.manager._client.fetch_channel = AsyncMock(
+                return_value=SimpleNamespace(id=500)
+            )
+
+            await item.manager.refresh()
+
+            assert await item.welcome.get_active(300) == item.session
+        finally:
+            await close_case(item)
+
+    asyncio.run(run())
+
+
+def test_failed_recheck_keeps_session(tmp_path, monkeypatch):
+    async def run():
+        item = await make_case(tmp_path, monkeypatch)
+        try:
+            item.panel.ensure.side_effect = missing_channel_error()
+            item.manager._client.fetch_channel = AsyncMock(
+                side_effect=OSError("network unavailable")
+            )
+
+            await item.manager.refresh()
+
+            assert await item.welcome.get_active(300) == item.session
+        finally:
+            await close_case(item)
+
+    asyncio.run(run())

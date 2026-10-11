@@ -5,9 +5,10 @@ import logging
 import discord
 
 from wanbot.logging_config import log_event
-from wanbot.welcome.questionnaire import QuestionnaireError
+from wanbot.welcome.questionnaire import QuestionnaireError, TEXT_LIMITS
 from wanbot.welcome.questionnaire_forms import (
     LABELS,
+    EditAnswersView,
     QuestionView,
     QuestionnaireStartView,
 )
@@ -26,10 +27,12 @@ class QuestionnaireController:
         welcome_repository,
         questionnaire_repository,
         lock,
+        on_completed=None,
     ):
         self.context = context
         self._welcome = welcome_repository
         self._questions = questionnaire_repository
+        self._on_completed = on_completed
         # Welcomeの作成・退出処理と、同じロックを渡す。
         self._lock = lock
         self._closed = False
@@ -64,6 +67,7 @@ class QuestionnaireController:
             async with self._lock:
                 session = await self._active_session()
                 snapshot = await self._questions.ensure(session)
+                await self._share_completed(snapshot)
             await self._render(interaction, snapshot)
         except Exception as error:
             await self._handle_error(interaction, error)
@@ -83,9 +87,72 @@ class QuestionnaireController:
                     question=question,
                     value=value,
                 )
+                await self._share_completed(snapshot)
             await self._render(interaction, snapshot)
         except Exception as error:
             await self._handle_error(interaction, error)
+
+    async def show_edit_menu(self, interaction):
+        if not await self.context.check(interaction):
+            return
+
+        try:
+            async with self._lock:
+                session = await self._active_session()
+                snapshot = await self._questions.ensure(session)
+
+            if not any(
+                getattr(snapshot.progress, field) is not None
+                for field in TEXT_LIMITS
+            ):
+                await self._render(interaction, snapshot)
+                return
+
+            self._stop_question_view()
+            await interaction.edit_original_response(
+                content="修正する自由入力の項目を選んでください。",
+                embed=None,
+                view=self._make_edit_view(snapshot),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except Exception as error:
+            await self._handle_error(interaction, error)
+
+    async def edit_text(self, interaction, question, value, revision):
+        if not await self.context.check(interaction):
+            return
+
+        try:
+            async with self._lock:
+                await self._active_session()
+                snapshot = await self._questions.edit(
+                    self.context.session_id,
+                    actor_id=interaction.user.id,
+                    expected_revision=revision,
+                    question=question,
+                    value=value,
+                )
+                await self._share_completed(snapshot)
+            await self._render(interaction, snapshot)
+        except Exception as error:
+            await self._handle_error(interaction, error)
+
+    def _make_edit_view(self, snapshot):
+        view = EditAnswersView(
+            self.context,
+            snapshot,
+            on_edit=self.edit_text,
+            on_back=self.begin,
+        )
+        self._question_view = view
+        return view
+
+    async def _share_completed(self, snapshot):
+        if (
+            snapshot.progress.status == "completed"
+            and self._on_completed is not None
+        ):
+            await self._on_completed(snapshot)
 
     def _stop_question_view(self):
         if self._question_view is not None:
@@ -105,7 +172,7 @@ class QuestionnaireController:
                     "運営からの案内をお待ちください。"
                 ),
                 embed=None,
-                view=None,
+                view=self._make_edit_view(snapshot),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             return
@@ -133,9 +200,12 @@ class QuestionnaireController:
                 embed.add_field(name=label, value=value, inline=False)
 
             await interaction.edit_original_response(
-                content="回答を保存しました。続く案内をお待ちください。",
+                content=(
+                    "回答を保存しました。続く案内をお待ちください。"
+                    "\n自由入力は下のメニューから修正できます。"
+                ),
                 embed=embed,
-                view=None,
+                view=self._make_edit_view(snapshot),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             return
@@ -145,6 +215,7 @@ class QuestionnaireController:
             self.context,
             snapshot,
             on_answer=self.answer,
+            on_edit=self.show_edit_menu,
         )
         self._question_view = view
 

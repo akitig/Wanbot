@@ -17,6 +17,7 @@ from wanbot.welcome.questionnaire_panel_repository import (
     QuestionnairePanelRepository,
 )
 from wanbot.welcome.questionnaire_repository import QuestionnaireRepository
+from wanbot.welcome.questionnaire_result import QuestionnaireResultRepository
 from wanbot.welcome.repository import WelcomeRepository, WelcomeSession
 
 if TYPE_CHECKING:
@@ -68,12 +69,16 @@ class WelcomeFeature:
         self._question_panel_repository = QuestionnairePanelRepository(
             config, guild.guild_id
         )
+        self._question_result_repository = QuestionnaireResultRepository(
+            config, guild.guild_id
+        )
         self._questionnaires = WelcomeQuestionnaires(
             client=client,
             guild_id=guild.guild_id,
             welcome_repository=self._repository,
             questionnaire_repository=self._question_repository,
             panel_repository=self._question_panel_repository,
+            result_repository=self._question_result_repository,
             lock=self._lifecycle.operation_lock,
             is_available=self._available,
         )
@@ -268,4 +273,7 @@ class WelcomeFeature:
                         try:
                             await self._question_panel_repository.close()
                         finally:
-                            await self._repository.close()
+                            try:
+                                await self._question_result_repository.close()
+                            finally:
+                                await self._repository.close()

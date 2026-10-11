@@ -166,6 +166,11 @@ def feature_case(monkeypatch):
         )),
     )
 
+    monkeypatch.setattr(
+        feature_module, "QuestionnaireResultRepository",
+        Mock(return_value=SimpleNamespace(close=AsyncMock())),
+    )
+
     feature = WelcomeFeature(client, Mock(), guild)
     return feature, lifecycle, repository
 

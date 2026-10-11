@@ -45,6 +45,10 @@ def setup_feature():
             return_value=channels,
         ) as channels_factory,
         patch(
+            "wanbot.welcome.feature.QuestionnaireResultRepository",
+            return_value=SimpleNamespace(close=AsyncMock()),
+        ),
+        patch(
             "wanbot.welcome.feature.QuestionnaireRepository",
             return_value=SimpleNamespace(close=AsyncMock()),
         ),

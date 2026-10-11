@@ -12,6 +12,7 @@ from wanbot.storage.async_store import AsyncGuildJsonStore
 CLOSE_REASONS = frozenset({
     "member_left",
     "setup_cancelled",
+    "channel_deleted",
     "completed",
     "kick_approved",
 })
