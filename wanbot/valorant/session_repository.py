@@ -28,13 +28,15 @@ class SessionRepository:
         config: AppConfig,
         guild_id: int,
         question_set: QuestionSet,
+        *,
+        document_name: str = "valorant_sessions",
     ) -> None:
         self._guild_id = guild_id
         self._question_set = question_set
         self._store = AsyncGuildJsonStore(
             config,
             guild_id,
-            "valorant_sessions",
+            document_name,
         )
 
     def _restore(

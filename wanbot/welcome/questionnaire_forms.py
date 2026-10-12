@@ -7,6 +7,7 @@ from typing import Callable
 import discord
 
 from wanbot.logging_config import log_event
+from wanbot.welcome.input_activity import track_input
 from wanbot.welcome.questionnaire import TEXT_LIMITS
 
 
@@ -60,6 +61,7 @@ class QuestionnaireContext:
     user_id: int
     session_id: str
     is_available: Callable[[], bool]
+    activity: object | None = None
 
     async def check(self, interaction):
         if (
@@ -169,6 +171,7 @@ class TextQuestionModal(discord.ui.Modal):
             ),
         )
         self.add_item(self.answer_input)
+        track_input(context, self, "introduction", 300)
 
     async def on_submit(self, interaction):
         # フォームを開いた後に状態が変わる場合もあるため再確認する。
@@ -200,6 +203,7 @@ class QuestionView(SafeQuestionView):
             raise ValueError("Questionnaire is not accepting answers")
 
         super().__init__(context, timeout=300)
+        track_input(context, self, "introduction", 300)
         self.question = snapshot.progress.next_question
         self.revision = snapshot.revision
         self._on_answer = on_answer

@@ -46,6 +46,7 @@ CHANNEL_REQUIREMENTS = {
             "view_channel",
             "send_messages",
             "embed_links",
+            "read_message_history",
         ),
     },
 }

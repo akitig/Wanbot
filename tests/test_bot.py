@@ -42,14 +42,13 @@ def test_unimplemented_enabled_feature_is_rejected():
         validate_implementations(config, FeatureRegistry())
 
 
-def test_unimplemented_dm_forward_is_rejected():
+def test_implemented_dm_forward_is_accepted():
     config = make_config(
         DM_FORWARD_ENABLED="true",
         DM_FORWARD_USER_ID="300",
     )
 
-    with pytest.raises(ConfigError, match="DM_FORWARD_ENABLED"):
-        validate_implementations(config, FeatureRegistry())
+    validate_implementations(config, FeatureRegistry())
 
 
 def test_repeated_ready_does_not_start_features_twice(monkeypatch):

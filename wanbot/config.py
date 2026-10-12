@@ -77,6 +77,8 @@ class GuildConfig:
     disboard_bot_id: int | None = None
     disboard_bump_command_id: int | None = None
     bump_cooldown_seconds: int = 7200
+    welcome_reminder_seconds: int = 48 * 60 * 60
+    welcome_timeout_seconds: int = 72 * 60 * 60
 
     def feature_enabled(self, feature: str) -> bool:
         return feature in self.enabled_features
@@ -138,6 +140,45 @@ def _boolean(values: Mapping[str, str], key: str) -> bool:
     if raw == "true":
         return True
     raise ConfigError(f"{key}: true または false を指定してください")
+
+
+
+def _welcome_waiting_limits(values, prefix, features):
+    reminder = 48 * 60 * 60
+    timeout = 72 * 60 * 60
+    if "welcome" not in features:
+        return reminder, timeout
+
+    result = []
+    for suffix, default in (
+        ("WELCOME_REMINDER_SECONDS", reminder),
+        ("WELCOME_TIMEOUT_SECONDS", timeout),
+    ):
+        key = f"{prefix}_{suffix}"
+        raw = _text(values, key)
+        if not raw:
+            result.append(default)
+            continue
+        if (
+            not raw.isascii()
+            or not raw.isdecimal()
+            or len(raw) > 10
+        ):
+            raise ConfigError(f"{key}: 正の整数の秒数を指定してください")
+        value = int(raw)
+        if not 1 <= value <= 2_147_483_647:
+            raise ConfigError(f"{key}: 秒数が有効範囲外です")
+        result.append(value)
+
+    if result[0] >= result[1]:
+        raise ConfigError(
+            f"{prefix}_WELCOME_REMINDER_SECONDS / "
+            f"{prefix}_WELCOME_TIMEOUT_SECONDS: "
+            "リマインドより後に退出確認の期限を設定してください"
+        )
+    if prefix == "PROD" and result != [reminder, timeout]:
+        raise ConfigError("本番の本人期限は48時間・72時間に固定されています")
+    return tuple(result)
 
 
 def _guild(values: Mapping[str, str], prefix: str) -> GuildConfig | None:
@@ -239,6 +280,10 @@ def _guild(values: Mapping[str, str], prefix: str) -> GuildConfig | None:
             if not 1 <= bump_cooldown_seconds <= 2_147_483_647:
                 raise ConfigError(f"{cooldown_key}: 秒数が有効範囲外です")
 
+    welcome_reminder_seconds, welcome_timeout_seconds = (
+        _welcome_waiting_limits(values, prefix, features)
+    )
+
     return GuildConfig(
         environment=prefix.lower(),
         guild_id=guild_id,
@@ -251,6 +296,8 @@ def _guild(values: Mapping[str, str], prefix: str) -> GuildConfig | None:
         disboard_bot_id=disboard_bot_id,
         disboard_bump_command_id=disboard_bump_command_id,
         bump_cooldown_seconds=bump_cooldown_seconds,
+        welcome_reminder_seconds=welcome_reminder_seconds,
+        welcome_timeout_seconds=welcome_timeout_seconds,
     )
 
 

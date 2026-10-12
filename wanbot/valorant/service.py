@@ -31,12 +31,18 @@ class DiagnosisService:
         config: AppConfig,
         guild_id: int,
         scorer: DiagnosisScorer,
+        *,
+        session_repository: SessionRepository | None = None,
     ) -> None:
         self._scorer = scorer
-        self._sessions = SessionRepository(
-            config,
-            guild_id,
-            scorer.question_set,
+        self._sessions = (
+            session_repository
+            if session_repository is not None
+            else SessionRepository(
+                config,
+                guild_id,
+                scorer.question_set,
+            )
         )
         self._results = DiagnosisRepository(config, guild_id, scorer)
 

@@ -26,7 +26,7 @@ def is_questionnaire_panel(message, *, bot_id, channel_id, custom_id):
     return any(
         getattr(component, "custom_id", None) == custom_id
         for row in message.components
-        for component in row.children
+        for component in getattr(row, "children", ())
     )
 
 

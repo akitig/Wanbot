@@ -5,6 +5,9 @@ import logging
 import discord
 
 from wanbot.logging_config import log_event
+from wanbot.welcome.input_activity import finish_input
+from wanbot.valorant.session import SessionError
+from wanbot.welcome.valorant_notices import diagnosis_notice
 from wanbot.welcome.questionnaire import QuestionnaireError, TEXT_LIMITS
 from wanbot.welcome.questionnaire_forms import (
     LABELS,
@@ -13,6 +16,7 @@ from wanbot.welcome.questionnaire_forms import (
     QuestionnaireStartView,
 )
 from wanbot.welcome.questionnaire_repository import QuestionnaireConflict
+from wanbot.welcome.rules_ui import RULES_GUIDANCE, add_rules_buttons
 
 
 class QuestionnaireUnavailable(ValueError):
@@ -28,11 +32,19 @@ class QuestionnaireController:
         questionnaire_repository,
         lock,
         on_completed=None,
+        rules_checker=None,
+        on_diagnosis=None,
+        on_interview=None,
+        checklist_mode=False,
     ):
         self.context = context
         self._welcome = welcome_repository
         self._questions = questionnaire_repository
         self._on_completed = on_completed
+        self._rules_checker = rules_checker
+        self._on_diagnosis = on_diagnosis
+        self._on_interview = on_interview
+        self._checklist_mode = checklist_mode
         # Welcomeの作成・退出処理と、同じロックを渡す。
         self._lock = lock
         self._closed = False
@@ -92,6 +104,23 @@ class QuestionnaireController:
         except Exception as error:
             await self._handle_error(interaction, error)
 
+    async def answer_batch(self, interaction, answers, revision):
+        if not await self.context.check(interaction):
+            return
+        try:
+            async with self._lock:
+                await self._active_session()
+                snapshot = await self._questions.submit_batch(
+                    self.context.session_id,
+                    actor_id=interaction.user.id,
+                    expected_revision=revision,
+                    answers=answers,
+                )
+                await self._share_completed(snapshot)
+            await self._render(interaction, snapshot)
+        except Exception as error:
+            await self._handle_error(interaction, error)
+
     async def show_edit_menu(self, interaction):
         if not await self.context.check(interaction):
             return
@@ -144,10 +173,131 @@ class QuestionnaireController:
             on_edit=self.edit_text,
             on_back=self.begin,
         )
+        if self._checklist_mode:
+            self._question_view = view
+            return view
+        if (
+            snapshot.progress.status == "completed"
+            and self._rules_checker is not None
+        ):
+            add_rules_buttons(
+                view,
+                context=self.context,
+                checker=self._rules_checker,
+                on_check=self.check_rules,
+            )
+        if (
+            snapshot.progress.status == "completed"
+            and snapshot.progress.plays_valo is True
+            and self._on_diagnosis is not None
+        ):
+            button = discord.ui.Button(
+                label="VALORANT診断を開始・再開する",
+                style=discord.ButtonStyle.primary,
+                row=3,
+            )
+
+            async def callback(interaction):
+                if not await self.context.check(interaction):
+                    return
+                await interaction.response.defer(
+                    ephemeral=True, thinking=True
+                )
+                await self.start_diagnosis(interaction)
+
+            button.callback = callback
+            view.add_item(button)
+
+        if (
+            snapshot.progress.status == "completed"
+            and self._on_interview is not None
+        ):
+            interview_button = discord.ui.Button(
+                label="面談希望日時を入力・確認する",
+                style=discord.ButtonStyle.primary,
+                row=4,
+            )
+            interview_button.callback = self._on_interview
+            view.add_item(interview_button)
+
         self._question_view = view
         return view
 
+    async def start_diagnosis(self, interaction):
+        if not await self.context.check(interaction):
+            return
+
+        try:
+            async with self._lock:
+                session = await self._active_session()
+                snapshot = await self._questions.ensure(session)
+                if (
+                    snapshot.progress.status != "completed"
+                    or snapshot.progress.plays_valo is not True
+                    or self._on_diagnosis is None
+                ):
+                    raise QuestionnaireUnavailable(
+                        "Welcome diagnosis is unavailable"
+                    )
+
+            # 診断側も同じロックで案内を確認するため、ここでは解放する。
+            message_id = await self._on_diagnosis()
+            url = (
+                f"https://discord.com/channels/{self.context.guild_id}/"
+                f"{self.context.channel_id}/{message_id}"
+            )
+            await interaction.edit_original_response(
+                content=f"診断の質問・結果はこちらです。\n{url}",
+                embed=None,
+                view=None,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except Exception as error:
+            await self._handle_error(interaction, error)
+
+    async def check_rules(self, interaction):
+        if not await self.context.check(interaction):
+            return
+
+        try:
+            async with self._lock:
+                session = await self._active_session()
+                snapshot = await self._questions.ensure(session)
+                if (
+                    snapshot.progress.status != "completed"
+                    or self._rules_checker is None
+                ):
+                    raise QuestionnaireUnavailable(
+                        "Rules confirmation is unavailable"
+                    )
+
+                confirmed = await self._rules_checker.has_reacted(
+                    self.context.user_id
+                )
+                # 通信待ちの間に停止した場合も、確認完了にしない。
+                await self._active_session()
+
+                if confirmed:
+                    notice = (
+                        "ルールへのリアクションを確認しました。"
+                        "\n続く案内をお待ちください。"
+                    )
+                else:
+                    notice = (
+                        "指定のリアクションをまだ確認できません。"
+                        "\nルール投稿にリアクションしてから、"
+                        "もう一度確認してください。"
+                    )
+
+                await self._render(
+                    interaction, snapshot, rules_notice=notice
+                )
+        except Exception as error:
+            await self._handle_error(interaction, error)
+
     async def _share_completed(self, snapshot):
+        if snapshot.progress.status != "answering":
+            finish_input(self.context, "introduction")
         if (
             snapshot.progress.status == "completed"
             and self._on_completed is not None
@@ -159,7 +309,7 @@ class QuestionnaireController:
             self._question_view.stop()
             self._question_view = None
 
-    async def _render(self, interaction, snapshot):
+    async def _render(self, interaction, snapshot, *, rules_notice=None):
         if self._closed:
             return
         self._stop_question_view()
@@ -199,11 +349,26 @@ class QuestionnaireController:
             for label, value in fields:
                 embed.add_field(name=label, value=value, inline=False)
 
-            await interaction.edit_original_response(
-                content=(
-                    "回答を保存しました。続く案内をお待ちください。"
+            content = (
+                "回答を保存しました。続く案内をお待ちください。"
+                "\n自由入力は下のメニューから修正できます。"
+            )
+            if self._rules_checker is not None and not self._checklist_mode:
+                content = (
+                    "回答を保存しました。"
                     "\n自由入力は下のメニューから修正できます。"
-                ),
+                    "\n\n" + (rules_notice or RULES_GUIDANCE)
+                )
+
+            if self._checklist_mode:
+                content = (
+                    "自己紹介を保存しました。"
+                    "\n自由入力は下のメニューから修正できます。"
+                    "\n次の手続きはWelcomeのチェックリストから進めてください。"
+                )
+
+            await interaction.edit_original_response(
+                content=content,
                 embed=embed,
                 view=self._make_edit_view(snapshot),
                 allowed_mentions=discord.AllowedMentions.none(),
@@ -211,6 +376,29 @@ class QuestionnaireController:
             return
 
         question = progress.next_question
+        if self._checklist_mode and question != "age_confirmation":
+            from wanbot.welcome.questionnaire_batch_forms import (
+                QuestionnaireBatchView,
+            )
+
+            view = QuestionnaireBatchView(
+                self.context,
+                snapshot,
+                on_submit=self.answer_batch,
+                on_edit=self.show_edit_menu,
+            )
+            self._question_view = view
+            await interaction.edit_original_response(
+                content=(
+                    "下のボタンから入力フォームを開いてください。"
+                    "\n複数の項目をまとめて入力できます。"
+                ),
+                embed=None,
+                view=view,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+
         view = QuestionView(
             self.context,
             snapshot,
@@ -238,9 +426,12 @@ class QuestionnaireController:
         )
 
     async def _handle_error(self, interaction, error):
+        finish_input(self.context, "introduction")
         self._stop_question_view()
 
-        if isinstance(error, QuestionnaireUnavailable):
+        if isinstance(error, SessionError):
+            message = diagnosis_notice(error)
+        elif isinstance(error, QuestionnaireUnavailable):
             message = "この案内では現在、回答を受け付けていません。"
         elif isinstance(error, QuestionnaireConflict):
             message = (

@@ -248,5 +248,57 @@ class QuestionnaireRepository:
         assert result is not None
         return result
 
+    async def submit_batch(
+        self, session_id, *, actor_id, expected_revision, answers
+    ):
+        """フォームの回答を、全件検証してから一括保存する。"""
+        _session_id(session_id)
+        _user_id(actor_id)
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("Invalid questionnaire revision")
+
+        answers = tuple(answers)
+        if not answers or len(answers) > 5:
+            raise ValueError("Invalid batch size")
+
+        result = None
+
+        def change(data):
+            nonlocal result
+            current = _decode(data).get(session_id)
+            if current is None:
+                raise QuestionnaireConflict("Questionnaire was not found")
+            if current.user_id != actor_id:
+                raise QuestionnaireConflict("Only the owner can answer")
+            if current.revision != expected_revision:
+                raise QuestionnaireConflict("Questionnaire has changed")
+
+            progress = current.progress
+            events = []
+            for question, value in answers:
+                event = {
+                    "kind": "answer",
+                    "question": question,
+                    "value": value,
+                }
+                progress = _apply(progress, event)
+                events.append(event)
+
+            # 全回答が正しいことを確認できてから変更する。
+            record = data["records"][session_id]
+            record["events"].extend(events)
+            record["revision"] += len(events)
+            result = QuestionnaireSnapshot(
+                session_id=session_id,
+                user_id=current.user_id,
+                revision=record["revision"],
+                progress=progress,
+            )
+            return data
+
+        await self._store.update(change)
+        assert result is not None
+        return result
+
     async def close(self):
         await self._store.close()

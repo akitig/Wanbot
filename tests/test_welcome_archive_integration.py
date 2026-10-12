@@ -31,6 +31,13 @@ def event_case():
         guild_id=100,
         user=SimpleNamespace(id=300, bot=False),
     )
+    # このテストではWelcomeの退出処理だけを有効にする。
+    guild.feature_enabled = lambda name: name == "welcome"
+
+    # 仮のBotにも、分離した本物のWelcome終了処理を接続する。
+    client._archive_departed_welcome = (
+        WanbotClient._archive_departed_welcome.__get__(client, WanbotClient)
+    )
     return client, payload, feature, guild
 
 
@@ -112,7 +119,10 @@ def test_raw_leave_waits_for_startup():
 
 
 def feature_case(monkeypatch):
-    repository = SimpleNamespace(close=AsyncMock())
+    repository = SimpleNamespace(
+        close=AsyncMock(),
+        open_sessions=AsyncMock(return_value=()),
+    )
     channels = SimpleNamespace(ensure=AsyncMock())
     archive = SimpleNamespace(archive=AsyncMock())
     lifecycle = SimpleNamespace(
@@ -171,7 +181,25 @@ def feature_case(monkeypatch):
         Mock(return_value=SimpleNamespace(close=AsyncMock())),
     )
 
-    feature = WelcomeFeature(client, Mock(), guild)
+    # ルール確認処理の初期化に必要な、テスト専用の設定。
+    guild.ids = {
+        "RULES_CHANNEL_ID": 500,
+        "RULES_MESSAGE_ID": 600,
+    }
+    guild.rules_emoji = "✅"
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    # テスト中だけ使う保存先。終了時に片付ける。
+    storage_directory = TemporaryDirectory()
+    config = Mock()
+    config.runtime_data_dir = Path(storage_directory.name)
+    # 実際のGuildConfigと同じ、通常の本人期限を設定する。
+    guild.environment = "test"
+    guild.welcome_reminder_seconds = 48 * 60 * 60
+    guild.welcome_timeout_seconds = 72 * 60 * 60
+    feature = WelcomeFeature(client, config, guild)
+    feature._test_storage_directory = storage_directory
     return feature, lifecycle, repository
 
 

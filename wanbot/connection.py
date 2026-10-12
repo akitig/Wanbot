@@ -40,8 +40,10 @@ class ConnectionCheckClient(discord.Client):
         intents = discord.Intents.none()
         intents.guilds = True
 
+        # DM転送を有効にした場合だけ、DM投稿を受信する。
+        intents.dm_messages = config.dm_forward_enabled
+
         # BUMP成功の本文・埋め込みと、投稿の更新を受け取る。
-        # DMメッセージの購読はここでは有効にしない。
         if any(
             guild.feature_enabled("bump")
             for guild in config.guilds.values()
@@ -60,6 +62,12 @@ class ConnectionCheckClient(discord.Client):
             guild.feature_enabled("welcome")
             for guild in config.guilds.values()
         )
+
+        # Welcomeのルールリアクション追加・解除を受信する。
+        intents.guild_reactions = intents.members
+        intents.voice_states = intents.members
+        if intents.members:
+            intents.guild_messages = True
 
         super().__init__(intents=intents)
 
