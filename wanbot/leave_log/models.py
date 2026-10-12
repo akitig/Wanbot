@@ -44,6 +44,7 @@ class DepartureSnapshot:
     roles: tuple[RoleSnapshot, ...] | None
     joined_at: datetime | None
     observed_at: datetime
+    avatar_url: str | None = None
 
     def __post_init__(self):
         if (
@@ -67,6 +68,14 @@ class DepartureSnapshot:
             if len(ids) != len(set(ids)):
                 raise DepartureDataError("ロールが重複しています。")
 
+        if self.avatar_url is not None:
+            if (
+                type(self.avatar_url) is not str
+                or not self.avatar_url.startswith("https://")
+                or len(self.avatar_url) > 2048
+            ):
+                raise DepartureDataError("アイコンURLが不正です。")
+
         _time(self.observed_at)
         if self.joined_at is not None:
             _time(self.joined_at)
@@ -78,7 +87,7 @@ def encode_snapshot(snapshot):
     def timestamp(value):
         return value.astimezone(timezone.utc).isoformat()
 
-    return {
+    result = {
         "event_id": snapshot.event_id,
         "guild_id": snapshot.guild_id,
         "user_id": snapshot.user_id,
@@ -96,6 +105,9 @@ def encode_snapshot(snapshot):
         ),
         "observed_at": timestamp(snapshot.observed_at),
     }
+    if snapshot.avatar_url is not None:
+        result["avatar_url"] = snapshot.avatar_url
+    return result
 
 
 def decode_snapshot(record):
@@ -103,7 +115,11 @@ def decode_snapshot(record):
         "event_id", "guild_id", "user_id", "username", "display_name",
         "roles", "joined_at", "observed_at",
     }
-    if type(record) is not dict or set(record) != fields:
+    if (
+        type(record) is not dict
+        or not fields <= set(record)
+        or not set(record) <= fields | {"avatar_url"}
+    ):
         raise DepartureDataError("退出情報の保存形式が不正です。")
 
     try:
@@ -137,6 +153,7 @@ def decode_snapshot(record):
                 else parse(record["joined_at"])
             ),
             observed_at=parse(record["observed_at"]),
+            avatar_url=record.get("avatar_url"),
         )
     except (TypeError, ValueError, OverflowError):
         raise DepartureDataError("退出情報の保存内容が不正です。") from None
