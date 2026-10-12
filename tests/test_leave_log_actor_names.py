@@ -46,7 +46,7 @@ def result(**kwargs):
 
 def actor_field(match):
     embed = departure_embed(snapshot(), match)
-    return next(field.value for field in embed.fields if field.name == "実行者")
+    return next(field.value for field in embed.fields if field.name == "👮 実行者")
 
 
 def test_actor_names_survive_storage():

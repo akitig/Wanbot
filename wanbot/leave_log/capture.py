@@ -31,6 +31,12 @@ def capture_departure(
                 if role.id != guild_id
             )
 
+    avatar_owner = member if member is not None else user
+    avatar = getattr(avatar_owner, "display_avatar", None)
+    avatar_url = getattr(avatar, "url", None)
+    if type(avatar_url) is not str or not avatar_url.startswith("https://"):
+        avatar_url = None
+
     return DepartureSnapshot(
         event_id=event_id,
         guild_id=guild_id,
@@ -40,4 +46,5 @@ def capture_departure(
         roles=roles,
         joined_at=joined_at,
         observed_at=observed_at,
+        avatar_url=avatar_url,
     )

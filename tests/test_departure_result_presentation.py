@@ -33,7 +33,19 @@ def result(action="kick"):
 
 
 def field(embed, name):
-    return next(item.value for item in embed.fields if item.name == name)
+    labels = {
+        "ユーザー": "👤 ユーザー",
+        "ユーザーID": "🆔 ID",
+        "退出時のロール": "🎭 退出時ロール",
+        "理由": "📝 理由",
+        "実行者": "👮 実行者",
+        "サーバー参加日時": "📥 サーバー参加日時",
+        "退出検知日時": "📤 退出検知日時",
+        "判定について": "ℹ️ 判定について",
+    }
+    return next(
+        item.value for item in embed.fields if item.name == labels[name]
+    )
 
 
 @pytest.mark.parametrize(
@@ -42,10 +54,16 @@ def field(embed, name):
 )
 def test_matched_result_displays_action_actor_and_reason(action, label):
     embed = departure_embed(snapshot(), result(action))
-    assert embed.description == f"退出の種類：{label}"
+    expected_title = (
+        "🦶 ユーザーが追放されました"
+        if action == "kick" else "🕊️ ユーザーがBANされました"
+    )
+    assert embed.title == expected_title
     assert field(embed, "実行者") == "取得できませんでした（ID: 400）"
     assert field(embed, "理由") == "テスト理由"
-    assert field(embed, "監査ログID") == "1000"
+    assert not any(
+        item.name == "監査ログID" for item in embed.fields
+    )
 
 
 def test_missing_actor_and_reason_are_explicit():
@@ -73,9 +91,9 @@ def test_no_audit_does_not_assert_voluntary_departure():
     embed = departure_embed(
         snapshot(), AuditMatch("unknown", None, "no_matching_audit")
     )
-    assert embed.description == "退出の種類：判別できませんでした。"
+    assert embed.title == "🚪 ユーザーが退出しました"
     assert "断定はできません" in field(embed, "判定について")
-    assert not any(item.name == "実行者" for item in embed.fields)
+    assert field(embed, "実行者") == "特定できませんでした。"
 
 
 def test_failed_lookup_is_explained():
